@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recycle Checker</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>♻️ Recycle Checker</h1>
+            <p class="subtitle">Is it recyclable? Let's find out!</p>
+        </header>
+
+        <main>
+            <div class="upload-section" id="uploadSection">
+                <!-- Camera input for mobile -->
+                <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display: none;">
+
+                <!-- File upload for desktop -->
+                <input type="file" id="fileInput" accept="image/*" style="display: none;">
+
+                <div class="button-group">
+                    <button class="btn btn-primary" id="cameraBtn">
+                        📷 Take Photo
+                    </button>
+                    <button class="btn btn-secondary" id="uploadBtn">
+                        📁 Upload Photo
+                    </button>
+                </div>
+            </div>
+
+            <div class="preview-section" id="previewSection" style="display: none;">
+                <div class="image-container">
+                    <img id="previewImage" src="" alt="Preview">
+                </div>
+
+                <button class="btn btn-primary" id="analyzeBtn">
+                    🔍 Check if Recyclable
+                </button>
+
+                <button class="btn btn-link" id="retakeBtn">
+                    ↺ Take Another Photo
+                </button>
+            </div>
+
+            <div class="loading-section" id="loadingSection" style="display: none;">
+                <div class="spinner"></div>
+                <p>Analyzing your item...</p>
+            </div>
+
+            <div class="results-section" id="resultsSection" style="display: none;">
+                <div class="result-main" id="resultMain">
+                    <!-- Main response will appear here -->
+                </div>
+
+                <div class="result-subtext" id="resultSubtext">
+                    <!-- Subtext will appear here -->
+                </div>
+
+                <button class="btn btn-primary" id="checkAnotherBtn">
+                    Check Another Item
+                </button>
+            </div>
+        </main>
+
+        <footer>
+            <p>Help the environment, one item at a time 🌍</p>
+        </footer>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
