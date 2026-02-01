@@ -274,19 +274,28 @@ def get_local_ip():
 
 if __name__ == '__main__':
     # Use a random port between 5000-9999 for security
-    port = random.randint(5000, 9999)
+    # Store in environment variable to persist across debug reloader restarts
+    if not os.environ.get('SERVER_PORT'):
+        port = random.randint(5000, 9999)
+        os.environ['SERVER_PORT'] = str(port)
+    else:
+        port = int(os.environ.get('SERVER_PORT'))
+
     local_ip = get_local_ip()
 
-    print("\n" + "="*60)
-    print("🌍 RECYCLE CHECKER SERVER STARTING")
-    print("="*60)
-    print(f"\n📱 Access from this computer:")
-    print(f"   http://localhost:{port}")
-    print(f"\n📱 Access from mobile (same WiFi):")
-    print(f"   http://{local_ip}:{port}")
-    print(f"\n⚠️  Security Note: Only share this URL with trusted users")
-    print(f"   Server will be accessible to anyone on your network")
-    print("\n" + "="*60 + "\n")
+    # Only print startup info in the main process (not in the reloader)
+    # The reloader sets WERKZEUG_RUN_MAIN environment variable
+    if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+        print("\n" + "="*60)
+        print("🌍 RECYCLE CHECKER SERVER STARTING")
+        print("="*60)
+        print(f"\n📱 Access from this computer:")
+        print(f"   http://localhost:{port}")
+        print(f"\n📱 Access from mobile (same WiFi):")
+        print(f"   http://{local_ip}:{port}")
+        print(f"\n⚠️  Security Note: Only share this URL with trusted users")
+        print(f"   Server will be accessible to anyone on your network")
+        print("\n" + "="*60 + "\n")
 
     # Run the Flask app
     app.run(debug=True, host='0.0.0.0', port=port)
