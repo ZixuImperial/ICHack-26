@@ -15,20 +15,51 @@ const resultMain = document.getElementById('resultMain');
 const resultSubtext = document.getElementById('resultSubtext');
 const binsTextbox = document.getElementById('binsTextbox');
 const enterBinsBtn = document.getElementById('enterBinsBtn');
+const buildingIndicator = document.getElementById('buildingIndicator');
+const buildingName = document.getElementById('buildingName');
 
 let selectedFile = null;
 let userLocation = null;
 let new_bin_types = [];
+let currentBuilding = null;
 
 // Get user's location on page load
 if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(
-        (position) => {
+        async (position) => {
             userLocation = {
                 latitude: position.coords.latitude,
                 longitude: position.coords.longitude
             };
             console.log('Location acquired:', userLocation);
+
+            // Immediately detect building and load bins
+            try {
+                const response = await fetch('/get_building_from_location', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(userLocation)
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    currentBuilding = data.building;
+                    buildingName.textContent = currentBuilding;
+                    buildingIndicator.style.display = 'block';
+
+                    // Update bins display with building-specific bins
+                    updateBinsDisplay(data.bins);
+
+                    console.log(`🏢 Building detected on page load: ${currentBuilding}`);
+                    console.log(`📦 Loaded bins for building:`, data.bins);
+                } else {
+                    console.warn('Could not detect building from GPS');
+                }
+            } catch (error) {
+                console.warn('Error detecting building:', error);
+            }
         },
         (error) => {
             console.warn('Location access denied or unavailable:', error.message);
@@ -106,6 +137,14 @@ async function analyzeImage() {
 
         const data = await response.json();
         displayResults(data.main_response, data.subtext);
+
+        // Store current building
+        if (data.building) {
+            currentBuilding = data.building;
+            buildingName.textContent = currentBuilding;
+            buildingIndicator.style.display = 'block';
+            console.log(`🏢 Building detected: ${currentBuilding}`);
+        }
 
         // Update bins display if available
         if (data.available_bins) {
@@ -190,6 +229,38 @@ async function handleEnterBins() {
         binsTextbox.value = '';
 
         console.log('Validated bin types:', new_bin_types);
+
+        // Save to building database if we have a current building
+        if (currentBuilding && currentBuilding !== 'Unknown building') {
+            console.log(`Attempting to save bins for building: "${currentBuilding}"`);
+            try {
+                const updateResponse = await fetch('/update_building_bins', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        building: currentBuilding,
+                        bins: new_bin_types
+                    })
+                });
+
+                const updateData = await updateResponse.json();
+
+                if (updateResponse.ok) {
+                    console.log(`✓ Successfully saved bins for building: ${currentBuilding}`, updateData);
+                } else {
+                    console.error('Failed to update building bins:', updateData);
+                }
+            } catch (updateError) {
+                console.error('Error updating building bins:', updateError);
+            }
+        } else {
+            console.warn(`Not saving bins - currentBuilding is: "${currentBuilding}"`);
+            if (!currentBuilding) {
+                console.warn('Tip: Analyze an item with GPS first to detect building');
+            }
+        }
 
     } catch (error) {
         console.error('Error:', error);

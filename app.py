@@ -54,6 +54,17 @@ def load_building_bins():
 
 building_bins_db = load_building_bins()
 
+def save_building_bins(bins_db):
+    """Save the building bins database to JSON file"""
+    try:
+        with open(BUILDING_BINS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(bins_db, f, indent=2, ensure_ascii=False)
+        print(f"✓ Updated building bins database")
+        return True
+    except Exception as e:
+        print(f"Error saving building bins database: {str(e)}")
+        return False
+
 def save_to_csv(log_data):
     """Save log data to CSV file"""
     try:
@@ -218,6 +229,83 @@ If no valid bin types are found, return an empty array.
         print(f"Error validating bins: {str(e)}")
         return jsonify({'error': f'Failed to validate bins: {str(e)}'}), 500
 
+@app.route('/update_building_bins', methods=['POST'])
+def update_building_bins():
+    """Update the bins available for a specific building"""
+    try:
+        data = request.get_json()
+        building = data.get('building', '')
+        bins = data.get('bins', [])
+
+        print(f"📝 Received request to update bins:")
+        print(f"   Building: '{building}'")
+        print(f"   Bins: {bins}")
+
+        if not building:
+            return jsonify({'error': 'No building name provided'}), 400
+
+        if not bins or len(bins) == 0:
+            return jsonify({'error': 'No bins provided'}), 400
+
+        # Update the in-memory database
+        building_bins_db[building] = bins
+        print(f"   In-memory database updated. Total buildings: {len(building_bins_db)}")
+
+        # Save to file
+        if save_building_bins(building_bins_db):
+            print(f"✓ Successfully updated bins for building '{building}': {bins}")
+            return jsonify({
+                'success': True,
+                'building': building,
+                'bins': bins,
+                'database_size': len(building_bins_db)
+            })
+        else:
+            return jsonify({'error': 'Failed to save to database'}), 500
+
+    except Exception as e:
+        print(f"❌ Error updating building bins: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Failed to update building bins: {str(e)}'}), 500
+
+@app.route('/get_building_from_location', methods=['POST'])
+def get_building_from_location():
+    """Get building and bins from GPS coordinates"""
+    try:
+        data = request.get_json()
+        latitude = data.get('latitude')
+        longitude = data.get('longitude')
+
+        if not latitude or not longitude:
+            return jsonify({'error': 'GPS coordinates required'}), 400
+
+        council, building = get_location_info_from_coordinates(float(latitude), float(longitude))
+
+        print(f"📍 Building lookup from GPS: {building}")
+
+        # Get bins for this building
+        available_bins = building_bins_db.get(building, DEFAULT_BINS)
+
+        return jsonify({
+            'building': building,
+            'council': council,
+            'bins': available_bins
+        })
+
+    except Exception as e:
+        print(f"Error getting building from location: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/debug/bins_database', methods=['GET'])
+def debug_bins_database():
+    """Debug endpoint to view the current bins database"""
+    return jsonify({
+        'database': building_bins_db,
+        'total_buildings': len(building_bins_db),
+        'file_path': BUILDING_BINS_FILE
+    })
+
 @app.route('/analyze', methods=['POST'])
 def analyze():
     try:
@@ -268,21 +356,35 @@ def analyze():
             council = DEFAULT_LOCATION
             building = "Unknown building"
             print("No GPS coordinates provided")
-        # Create prompt for Gemini
-        prompt = f"""Can the subject of this photo be put in the recycling bin in its current state?
-Firstly identify the type of material and for plastics the exact type.
-Then determine whether this can be put in the recycling in the local council.
-In this case the local council is {council}.
-Then reason about the current state and whether it should be put in the recyling bin.
-If the answer is leaning either way then answer accordingly.
+
+        # Get available bins for this building
+        available_bins = building_bins_db.get(building, DEFAULT_BINS)
+        bins_list = ", ".join(available_bins)
+
+        # Create prompt for Gemini with bin-specific context
+        prompt = f"""Analyze the item in this photo and determine which bin it should go in.
+
+Available bins at this location: {bins_list}
+
+Instructions:
+1. Identify the material type (for plastics, specify the exact type)
+2. Determine if it can be recycled in {council}
+3. Consider the current state of the item
+4. Choose the MOST APPROPRIATE bin from the available bins: {bins_list}
 
 Provide your response in the following format:
 
-MAIN_RESPONSE: [A clear, concise answer - either "Yes" or "No" or "Yes - However..." or "Maybe..."]
+MAIN_RESPONSE: [The specific bin name from the available bins, e.g., "Glass" or "Paper". If item needs preparation, say "BIN_NAME - However..."]
 
-SUBTEXT: [If the response is a however then provide a simple recommended step before recycling]
+SUBTEXT: [If preparation is needed, provide a simple step. Otherwise, leave empty or provide helpful context]
 
-LOG: [A comma seperated response with the following information in order: Location, The material and in the case of plastic the exact type, Whether or not it could be recycled Yes/No, A small description of what the item was, The bin type it should go in (Recycle bin if MAIN_RESPONSE is Yes, Non-recycle bin if MAIN_RESPONSE is No, Unknown if MAIN_RESPONSE is Maybe)]
+LOG: [A comma separated response with: Location, Material type (exact plastic type if applicable), Can be recycled (Yes/No), Item description, The specific bin name from available bins]
+
+Example responses:
+- If it's a glass bottle and "Glass" bin exists: MAIN_RESPONSE: "Glass"
+- If it's paper and "Paper" bin exists: MAIN_RESPONSE: "Paper"
+- If it's dirty and needs washing: MAIN_RESPONSE: "Glass - However..."
+- If it can't go in any available bin: MAIN_RESPONSE: "None - General Waste"
 """
         # Generate response from Gemini
         response = client.models.generate_content(
@@ -310,9 +412,6 @@ LOG: [A comma seperated response with the following information in order: Locati
         log_data = parsed_response.get("LOG", "")
         if log_data:
             save_to_csv(log_data)
-
-        # Get available bins for this building
-        available_bins = building_bins_db.get(building, DEFAULT_BINS)
 
         return jsonify({
             'main_response': parsed_response.get("MAIN_RESPONSE", "Unknown"),

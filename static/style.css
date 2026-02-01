@@ -231,6 +231,24 @@ main {
     font-weight: 500;
 }
 
+.building-indicator {
+    padding: 8px 12px;
+    background: #f0f9ff;
+    border-left: 3px solid var(--primary-color);
+    margin-bottom: 10px;
+    border-radius: 4px;
+}
+
+.building-indicator small {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.building-indicator #buildingName {
+    color: var(--text-dark);
+    font-weight: 600;
+}
+
 .bins-input-group {
     display: flex;
     gap: 10px;
