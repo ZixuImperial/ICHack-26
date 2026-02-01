@@ -34,6 +34,26 @@ geolocator = Nominatim(user_agent="recycle_checker_app")
 # CSV file path for logging
 CSV_LOG_FILE = "recycling_log.csv"
 
+# Building bins database
+BUILDING_BINS_FILE = "building_bins.json"
+
+# Default bins if building not in database
+DEFAULT_BINS = ["Recyclable", "General Waste"]
+
+# Load building bins database
+def load_building_bins():
+    """Load the building bins database from JSON file"""
+    try:
+        if os.path.isfile(BUILDING_BINS_FILE):
+            with open(BUILDING_BINS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        return {}
+    except Exception as e:
+        print(f"Error loading building bins database: {str(e)}")
+        return {}
+
+building_bins_db = load_building_bins()
+
 def save_to_csv(log_data):
     """Save log data to CSV file"""
     try:
@@ -41,7 +61,7 @@ def save_to_csv(log_data):
         file_exists = os.path.isfile(CSV_LOG_FILE)
 
         with open(CSV_LOG_FILE, 'a', newline='', encoding='utf-8') as csvfile:
-            fieldnames = ['timestamp', 'location', 'material', 'recyclable', 'description']
+            fieldnames = ['timestamp', 'location', 'material', 'recyclable', 'description', 'bin_type']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
             # Write header if file is new
@@ -54,8 +74,8 @@ def save_to_csv(log_data):
             else:
                 parts = log_data
 
-            # Ensure we have 4 parts (pad if necessary)
-            parts = (parts + ['', '', '', ''])[:4]
+            # Ensure we have 5 parts (pad if necessary)
+            parts = (parts + ['', '', '', '', ''])[:5]
 
             # Write the row with timestamp
             writer.writerow({
@@ -63,7 +83,8 @@ def save_to_csv(log_data):
                 'location': parts[0],
                 'material': parts[1],
                 'recyclable': parts[2],
-                'description': parts[3]
+                'description': parts[3],
+                'bin_type': parts[4]
             })
 
             print(f"✓ Logged to CSV: {parts}")
@@ -73,8 +94,8 @@ def save_to_csv(log_data):
         print(f"Error saving to CSV: {str(e)}")
         return False
 
-def get_council_from_coordinates(latitude, longitude):
-    """Get local council name from GPS coordinates using reverse geocoding"""
+def get_location_info_from_coordinates(latitude, longitude):
+    """Get location information including council and building from GPS coordinates"""
     try:
         location = geolocator.reverse(f"{latitude}, {longitude}", exactly_one=True, language='en')
 
@@ -98,21 +119,104 @@ def get_council_from_coordinates(latitude, longitude):
                 county = address.get('county')
                 if county and county != council:
                     council = f"{council}, {county}"
-            print(council)
-            return council
+
+            # Try to extract building information
+            # Priority order: building name, amenity, house name, office, or construct from address
+            building = (
+                address.get('building') or
+                address.get('amenity') or
+                address.get('house') or
+                address.get('office') or
+                address.get('tourism') or
+                address.get('leisure') or
+                None
+            )
+
+            # If no specific building name, construct address from components
+            if not building:
+                house_number = address.get('house_number', '')
+                road = address.get('road', '')
+                if house_number and road:
+                    building = f"{house_number} {road}"
+                elif road:
+                    building = road
+                else:
+                    building = "Unknown building"
+
+            print(f"Council: {council}, Building: {building}")
+            return council, building
+
         print("Default out")
-        return DEFAULT_LOCATION
+        return DEFAULT_LOCATION, "Unknown building"
 
     except (GeocoderTimedOut, GeocoderServiceError) as e:
         print(f"Geocoding error: {str(e)}")
-        return DEFAULT_LOCATION
+        return DEFAULT_LOCATION, "Unknown building"
     except Exception as e:
         print(f"Unexpected error in geocoding: {str(e)}")
-        return DEFAULT_LOCATION
+        return DEFAULT_LOCATION, "Unknown building"
 
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/validate_bins', methods=['POST'])
+def validate_bins():
+    try:
+        # Get the input text from the request
+        data = request.get_json()
+        input_text = data.get('input_text', '')
+
+        if not input_text:
+            return jsonify({'error': 'No input text provided'}), 400
+
+        # Create prompt for Gemini to validate and extract bin types
+        prompt = f"""Extract and validate the types of recycling/waste bins from the following text: "{input_text}"
+
+Analyze the input and:
+1. Identify valid bin types mentioned (e.g., Recycling, General Waste, Food Waste, Glass, Paper, Plastic, etc.)
+2. Correct any spelling mistakes or variations
+3. Remove any invalid or nonsensical entries
+4. Return only legitimate waste/recycling bin types
+
+Provide your response in the following JSON format:
+{{
+  "bins": ["Bin Type 1", "Bin Type 2", "Bin Type 3"]
+}}
+
+If no valid bin types are found, return an empty array.
+"""
+
+        # Generate response from Gemini
+        response = client.models.generate_content(
+            model="gemini-3-flash-preview",
+            contents=[prompt],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
+        )
+
+        # Parse the response
+        parsed_response = json.loads(response.text)
+
+        # Handle if response is a list - take first element
+        if isinstance(parsed_response, list) and len(parsed_response) > 0:
+            parsed_response = parsed_response[0]
+
+        # Extract validated bins
+        validated_bins = parsed_response.get("bins", [])
+
+        if not validated_bins:
+            return jsonify({'error': 'No valid bin types found in the input'}), 400
+
+        return jsonify({
+            'bins': validated_bins,
+            'count': len(validated_bins)
+        })
+
+    except Exception as e:
+        print(f"Error validating bins: {str(e)}")
+        return jsonify({'error': f'Failed to validate bins: {str(e)}'}), 500
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
@@ -147,19 +251,22 @@ def analyze():
         image.save(img_byte_arr, format='JPEG', quality=85, optimize=True)
         image_data = img_byte_arr.getvalue()
 
-        # Get GPS coordinates and determine council
+        # Get GPS coordinates and determine council and building
         latitude = request.form.get('latitude')
         longitude = request.form.get('longitude')
+        building = "Unknown building"
 
         if latitude and longitude:
             try:
-                council = get_council_from_coordinates(float(latitude), float(longitude))
-                print(f"Location detected: {council} (Lat: {latitude}, Lon: {longitude})")
+                council, building = get_location_info_from_coordinates(float(latitude), float(longitude))
+                print(f"Location detected: {council}, Building: {building} (Lat: {latitude}, Lon: {longitude})")
             except ValueError:
                 council = DEFAULT_LOCATION
+                building = "Unknown building"
                 print("Invalid GPS coordinates received")
         else:
             council = DEFAULT_LOCATION
+            building = "Unknown building"
             print("No GPS coordinates provided")
         # Create prompt for Gemini
         prompt = f"""Can the subject of this photo be put in the recycling bin in its current state?
@@ -175,7 +282,7 @@ MAIN_RESPONSE: [A clear, concise answer - either "Yes" or "No" or "Yes - However
 
 SUBTEXT: [If the response is a however then provide a simple recommended step before recycling]
 
-LOG: [A comma seperated response with the following information in order: Location, The material and in the case of plastic the exact type, Whether or not it could be recycled Yes/No, A small description of what the item was]
+LOG: [A comma seperated response with the following information in order: Location, The material and in the case of plastic the exact type, Whether or not it could be recycled Yes/No, A small description of what the item was, The bin type it should go in (Recycle bin if MAIN_RESPONSE is Yes, Non-recycle bin if MAIN_RESPONSE is No, Unknown if MAIN_RESPONSE is Maybe)]
 """
         # Generate response from Gemini
         response = client.models.generate_content(
@@ -204,9 +311,14 @@ LOG: [A comma seperated response with the following information in order: Locati
         if log_data:
             save_to_csv(log_data)
 
+        # Get available bins for this building
+        available_bins = building_bins_db.get(building, DEFAULT_BINS)
+
         return jsonify({
             'main_response': parsed_response.get("MAIN_RESPONSE", "Unknown"),
-            'subtext': parsed_response.get("SUBTEXT", "No details provided")
+            'subtext': parsed_response.get("SUBTEXT", "No details provided"),
+            'available_bins': available_bins,
+            'building': building
         })
 
     except Exception as e:

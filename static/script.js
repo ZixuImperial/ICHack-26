@@ -13,9 +13,12 @@ const retakeBtn = document.getElementById('retakeBtn');
 const checkAnotherBtn = document.getElementById('checkAnotherBtn');
 const resultMain = document.getElementById('resultMain');
 const resultSubtext = document.getElementById('resultSubtext');
+const binsTextbox = document.getElementById('binsTextbox');
+const enterBinsBtn = document.getElementById('enterBinsBtn');
 
 let selectedFile = null;
 let userLocation = null;
+let new_bin_types = [];
 
 // Get user's location on page load
 if (navigator.geolocation) {
@@ -47,6 +50,12 @@ fileInput.addEventListener('change', handleFileSelect);
 analyzeBtn.addEventListener('click', analyzeImage);
 retakeBtn.addEventListener('click', resetToUpload);
 checkAnotherBtn.addEventListener('click', resetToUpload);
+enterBinsBtn.addEventListener('click', handleEnterBins);
+binsTextbox.addEventListener('keypress', (event) => {
+    if (event.key === 'Enter') {
+        handleEnterBins();
+    }
+});
 
 // Handle file selection
 function handleFileSelect(event) {
@@ -97,6 +106,11 @@ async function analyzeImage() {
 
         const data = await response.json();
         displayResults(data.main_response, data.subtext);
+
+        // Update bins display if available
+        if (data.available_bins) {
+            updateBinsDisplay(data.available_bins);
+        }
     } catch (error) {
         console.error('Error:', error);
         alert('Failed to analyze the image. Please try again.');
@@ -123,6 +137,70 @@ function displayResults(mainResponse, subtext) {
     showSection(resultsSection);
 }
 
+// Update bins display
+function updateBinsDisplay(bins) {
+    const binsList = document.getElementById('binsList');
+    binsList.innerHTML = '';
+
+    bins.forEach(bin => {
+        const binTag = document.createElement('span');
+        binTag.className = 'bin-tag';
+        binTag.textContent = bin;
+        binsList.appendChild(binTag);
+    });
+}
+
+// Handle Enter button for bins
+async function handleEnterBins() {
+    const inputText = binsTextbox.value.trim();
+
+    if (!inputText) {
+        alert('Please enter bin types separated by commas');
+        return;
+    }
+
+    // Disable button and show loading state
+    enterBinsBtn.disabled = true;
+    enterBinsBtn.textContent = 'Validating...';
+
+    try {
+        // Send to Gemini API for validation
+        const response = await fetch('/validate_bins', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                input_text: inputText
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Failed to validate bins');
+        }
+
+        const data = await response.json();
+        new_bin_types = data.bins;
+
+        // Update the display with validated bin types
+        updateBinsDisplay(new_bin_types);
+
+        // Clear the textbox
+        binsTextbox.value = '';
+
+        console.log('Validated bin types:', new_bin_types);
+
+    } catch (error) {
+        console.error('Error:', error);
+        alert(error.message || 'Failed to validate bin types. Please try again.');
+    } finally {
+        // Re-enable button
+        enterBinsBtn.disabled = false;
+        enterBinsBtn.textContent = 'Enter';
+    }
+}
+
 // Reset to upload screen
 function resetToUpload() {
     selectedFile = null;
@@ -131,6 +209,10 @@ function resetToUpload() {
     previewImage.src = '';
     resultMain.textContent = '';
     resultSubtext.textContent = '';
+
+    // Reset bins to default
+    updateBinsDisplay(['Recyclable', 'General Waste']);
+
     showSection(uploadSection);
 }
 
